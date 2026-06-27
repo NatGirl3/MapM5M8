@@ -1,254 +1,50 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DXF Web Viewer</title>
-    <!-- Leaflet CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            height: 100vh;
-            flex-direction: column;
-        }
-        #controls {
-            padding: 15px;
-            background-color: #f8f9fa;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            z-index: 1000;
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        #map {
-            flex-grow: 1;
-            width: 100%;
-        }
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-        label {
-            font-size: 12px;
-            font-weight: bold;
-            color: #333;
-        }
-        input, select, button {
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        button {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            cursor: pointer;
-            font-weight: bold;
-            margin-top: 15px;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        #loading {
-            display: none;
-            color: #d9534f;
-            font-weight: bold;
-            margin-top: 15px;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DXF Web Viewer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💧</text></svg>">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#eef2ff;
+    font-family:'Segoe UI',Tahoma,sans-serif}
+  /* ฉากโหลดระหว่างรอ iframe พร้อม */
+  #splash{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:16px;color:#4f46e5;
+    background:linear-gradient(120deg,#eef2ff,#ecfeff);transition:opacity .5s}
+  #splash.hide{opacity:0;pointer-events:none}
+  #splash .logo{font-size:54px}
+  #splash .t{font-weight:600;font-size:1.1rem}
+  #splash .spin{width:34px;height:34px;border:4px solid #c7d2fe;border-top-color:#4f46e5;
+    border-radius:50%;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  iframe{position:fixed;inset:0;border:0;width:100%;height:100%;display:block}
+</style>
 </head>
 <body>
+  <div id="splash">
+    <div class="logo">💧</div>
+    <div class="spin"></div>
+    <div class="t">กำลังเปิด DXF Web Viewer...</div>
+  </div>
 
-    <div id="controls">
-        <div class="form-group">
-            <label for="dxf-files">อัปโหลดไฟล์ DXF (เลือกได้หลายไฟล์)</label>
-            <input type="file" id="dxf-files" accept=".dxf" multiple>
-        </div>
-        
-        <div class="form-group">
-            <label for="utm-zone">เลือกระบบพิกัด (UTM Zone)</label>
-            <select id="utm-zone">
-                <option value="48">Zone 48N (ภาคอีสาน, ตะวันออก)</option>
-                <option value="47">Zone 47N (ภาคเหนือ, กลาง, ใต้, ตะวันตก)</option>
-            </select>
-        </div>
+  <!-- ============================================================
+       👇 วางลิงก์ Web App ของคุณที่ลงท้ายด้วย /exec ตรงนี้
+       (จาก Apps Script: Deploy > Manage deployments > คัดลอก Web app URL)
+       ============================================================ -->
+  <iframe
+    id="app"
+    src="https://script.google.com/macros/s/AKfycbwHb9jcZ_a-4TRBTZLgpvVzr9enZIhkRjW3bFWISPOR2rI750wt8FG5vgqiX5VP8M1p/exec"
+    allow="clipboard-read; clipboard-write; fullscreen; geolocation"
+    referrerpolicy="no-referrer">
+  </iframe>
 
-        <div class="form-group">
-            <label for="layers">ชื่อ Layer ที่ต้องการ (คั่นด้วยลูกน้ำ)</label>
-            <input type="text" id="layers" value="1.IWR5, 1.IWR8">
-        </div>
-
-        <button id="process-btn">แสดงผลบนแผนที่</button>
-        <div id="loading">กำลังประมวลผล...</div>
-    </div>
-
-    <div id="map"></div>
-
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <!-- Proj4js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
-    <!-- DxfParser -->
-    <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
-
-    <script>
-        // กำหนดระบบพิกัด WGS84 UTM Zone 47N และ 48N
-        proj4.defs("EPSG:32647","+proj=utm +zone=47 +datum=WGS84 +units=m +no_defs");
-        proj4.defs("EPSG:32648","+proj=utm +zone=48 +datum=WGS84 +units=m +no_defs");
-
-        // สร้างแผนที่ Leaflet
-        var map = L.map('map').setView([15.0, 101.0], 6); // ศูนย์กลางประเทศไทยโดยประมาณ
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap'
-        }).addTo(map);
-
-        var geojsonLayer = L.geoJSON(null, {
-            style: function (feature) {
-                return { color: 'red', weight: 3, opacity: 0.8 };
-            },
-            onEachFeature: function (feature, layer) {
-                var popupContent = "<b>ชื่อไฟล์:</b> " + feature.properties.fileName + "<br>" +
-                                   "<b>Layer:</b> " + feature.properties.layer;
-                layer.bindPopup(popupContent);
-                layer.bindTooltip("ไฟล์: " + feature.properties.fileName);
-            }
-        }).addTo(map);
-
-        document.getElementById('process-btn').addEventListener('click', function() {
-            var files = document.getElementById('dxf-files').files;
-            if (files.length === 0) {
-                alert("กรุณาเลือกไฟล์ DXF ก่อน");
-                return;
-            }
-
-            var zone = document.getElementById('utm-zone').value;
-            var crs = "EPSG:326" + zone;
-            var layersInput = document.getElementById('layers').value;
-            var targetLayers = layersInput.split(',').map(s => s.trim().toUpperCase());
-
-            var loading = document.getElementById('loading');
-            loading.style.display = 'block';
-            geojsonLayer.clearLayers();
-            
-            var processedFiles = 0;
-            var allFeatures = [];
-            var bounds = [];
-
-            Array.from(files).forEach(file => {
-                var reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        var parser = new window.DxfParser();
-                        var dxf = parser.parseSync(e.target.result);
-                        
-                        var entities = dxf.entities;
-                        entities.forEach(entity => {
-                            if (!entity.layer) return;
-                            var entityLayer = entity.layer.toUpperCase();
-                            
-                            // กรองตาม Layer
-                            if (targetLayers.length > 0 && layersInput.trim() !== "") {
-                                if (!targetLayers.includes(entityLayer)) return;
-                            }
-
-                            var utmPoints = [];
-                            
-                            if (entity.type === 'LWPOLYLINE' || entity.type === 'POLYLINE') {
-                                if (entity.vertices && entity.vertices.length > 0) {
-                                    utmPoints = entity.vertices.map(v => [v.x, v.y]);
-                                    if (entity.shape) { // If marked closed by parser
-                                        utmPoints.push([entity.vertices[0].x, entity.vertices[0].y]);
-                                    }
-                                }
-                            } else if (entity.type === 'LINE') {
-                                utmPoints = [
-                                    [entity.vertices[0].x, entity.vertices[0].y],
-                                    [entity.vertices[1].x, entity.vertices[1].y]
-                                ];
-                            }
-
-                            if (utmPoints.length === 0) return;
-
-                            // ตัดเส้นที่กระโดดไกลเกิน 5000 เมตร
-                            var segments = [];
-                            var currentSegment = [];
-                            
-                            for (var i = 0; i < utmPoints.length; i++) {
-                                var p = utmPoints[i];
-                                if (i === 0) {
-                                    currentSegment.push(p);
-                                } else {
-                                    var prevP = utmPoints[i-1];
-                                    var dist = Math.hypot(p[0] - prevP[0], p[1] - prevP[1]);
-                                    if (dist > 5000) {
-                                        if (currentSegment.length > 1) {
-                                            segments.push(currentSegment);
-                                        }
-                                        currentSegment = [p];
-                                    } else {
-                                        currentSegment.push(p);
-                                    }
-                                }
-                            }
-                            if (currentSegment.length > 1) {
-                                segments.push(currentSegment);
-                            }
-
-                            // แปลงพิกัด UTM เป็น Lat/Lon และสร้าง GeoJSON
-                            segments.forEach(segment => {
-                                var lonlatSegment = segment.map(p => {
-                                    var ll = proj4(crs, "EPSG:4326", [p[0], p[1]]);
-                                    return [ll[0], ll[1]]; // GeoJSON wants [lon, lat]
-                                });
-
-                                lonlatSegment.forEach(ll => bounds.push([ll[1], ll[0]])); // Leaflet bounds wants [lat, lon]
-
-                                var feature = {
-                                    "type": "Feature",
-                                    "properties": {
-                                        "layer": entity.layer,
-                                        "fileName": file.name
-                                    },
-                                    "geometry": {
-                                        "type": "LineString",
-                                        "coordinates": lonlatSegment
-                                    }
-                                };
-                                allFeatures.push(feature);
-                            });
-                        });
-                    } catch (err) {
-                        console.error("Error parsing " + file.name + ": ", err);
-                    }
-
-                    processedFiles++;
-                    if (processedFiles === files.length) {
-                        // อัปเดตแผนที่
-                        if (allFeatures.length > 0) {
-                            geojsonLayer.addData({
-                                "type": "FeatureCollection",
-                                "features": allFeatures
-                            });
-                            
-                            var leafletBounds = L.latLngBounds(bounds);
-                            map.fitBounds(leafletBounds);
-                        } else {
-                            alert("ไม่พบข้อมูล Layer ที่ระบุในไฟล์เหล่านี้");
-                        }
-                        loading.style.display = 'none';
-                    }
-                };
-                reader.readAsText(file); // DxfParser needs plain text DXF
-            });
-        });
-    </script>
+  <script>
+    // ซ่อนฉากโหลดเมื่อ iframe โหลดเสร็จ (หรืออย่างช้าใน 6 วินาที)
+    var frame = document.getElementById('app');
+    function hideSplash(){ document.getElementById('splash').classList.add('hide'); }
+    frame.addEventListener('load', hideSplash);
+    setTimeout(hideSplash, 6000);
+  </script>
 </body>
 </html>
